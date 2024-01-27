@@ -31,7 +31,6 @@ static char pages[rows][256] = {0};
 static uint16_t row_ndx = 0;
 static bool newData = false;
 
-static int print_output_once = 0;
 static int reprint = 1;
 
 void displayDrawText(char *text) {
@@ -83,10 +82,10 @@ char *decoratePages(char (*pages)[256], byte rows = 10, byte start = 0) {
     iter_rows = row_ndx;
   }
 
-  Serial.print("start: ");
-  Serial.println(start);
-  Serial.print("iter_rows: ");
-  Serial.println(iter_rows);
+  // Serial.print("start: ");
+  // Serial.println(start);
+  // Serial.print("iter_rows: ");
+  // Serial.println(iter_rows);
 
   itoa(iter_rows, rows_bytes, 10);
   itoa(row_ndx, row_ndx_bytes, 10);
@@ -130,32 +129,7 @@ char *decoratePages(char (*pages)[256], byte rows = 10, byte start = 0) {
   return output_buf;
 }
 
-void displayDrawPages(char (*pages)[256], bool clear = false, int rows = 10) {
-  char output_buf[1024] = {0};
-  char i_bytes[5] = {0};
-  char rows_bytes[5] = {0};
 
-  if (clear) {
-    display.fillScreen(BLACK);
-    display.setCursor(0, 0);
-  }
-  
-  itoa(rows, rows_bytes, 10);
-  strcat(output_buf, "Rows: ");
-  strcat(output_buf, rows_bytes);
-  strcat(output_buf, "\n\n");
-
-  for (int i = 0; i < rows; i++) {
-    itoa(i, i_bytes, 10);
-    strcat(output_buf, "Row[");
-    strcat(output_buf, i_bytes);
-    strcat(output_buf, "]: ");
-    strcat(output_buf, (char *) pages[i]);
-    strcat(output_buf, "\n");
-  }
-
-  display.print(output_buf);
-}
 
 bool timer_callback(void *) {
   String output = "timer_callback = " + String(millis());
@@ -268,39 +242,22 @@ void loop(){
       byte rows = 6;
 
       if (newData) {
-        Serial.println("inside `if (newData) {}`");
+        Serial.println("HTTP response received, rendering pages.");
 
         char *decorated = decoratePages(pages, rows);
-        Serial.println("inside");
-        Serial.print("newData: ");
-        Serial.println(newData);
-        Serial.print("strlen((char *) decorated[0]): ");
-        Serial.println(strlen((char *) decorated[0]));
-        // Serial.print("decorated: ");
-        // Serial.println(decorated);
-
-        // FIXME this is no longer needed?
-        // strcpy(new_output_buf, decorated);
-
-
-        // strcat(new_output_buf, decorated);
-
-        // displayDrawPages(pages, true);
         displayDrawText(decorated, true);
         // Serial.println(decorated);
 
         free(decorated);
       } else {
-        Serial.println("inside `else {}`");
+        Serial.println("Disconnected from server, rendering existing page details.");
 
         char *decorated_cpy = decoratePages(pages, rows);
         displayDrawText(decorated_cpy, true);
         free(decorated_cpy);
       }
 
-      // print_output_once = 1;
       reprint = 0;
-      Serial.println("set `reprint = 0`");
     }
     newData = false;
 
