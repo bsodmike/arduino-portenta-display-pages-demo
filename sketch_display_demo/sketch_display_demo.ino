@@ -2,6 +2,16 @@
 #include "Arduino_GigaDisplay_GFX.h"
 #include <WiFi.h>
 
+#define DEBUG 0
+
+#if DEBUG == 1
+#define debug(x) Serial.print(x)
+#define debugln(x) Serial.println(x)
+#else
+#define debug(x)
+#define debugln(x)
+#endif
+
 #include "arduino_secrets.h" 
 ///////please enter your sensitive data in the Secret tab/arduino_secrets.h
 char ssid[] = SECRET_SSID;        // your network SSID (name)
@@ -23,12 +33,20 @@ GigaDisplay_GFX display; // create the object
 #define BLACK         0x0000
 #define TIMER_DELAY   2000
 
+#define DEFAULT_ROWS  32
+
 auto timer = timer_create_default(); // create a timer with default settings
 
-static uint8_t current_page = 0;
 static const byte rows = 32;
-static char pages[rows][256] = {0};
-static uint16_t row_ndx = 0;
+struct SharedData
+{
+  char pages_ptr[rows][256];
+  uint16_t row_ndx;
+}shared_data;
+
+static uint8_t current_page = 0;
+
+struct SharedData *shared_data_ptr = &shared_data;
 static bool newData = false;
 
 static int reprint = 1;
@@ -50,7 +68,7 @@ void displayDrawText(char *text, bool clear = false) {
   display.print(text);
 }
 
-char *decoratePages(char (*pages)[256], byte rows = 10, byte start = 0) {
+char *decoratepages_ptr(char (*pages_ptr)[256], byte rows = 10, byte start = 0) {
   IPAddress ip = WiFi.localIP();
   char *ssid = WiFi.SSID();
 
@@ -66,20 +84,20 @@ char *decoratePages(char (*pages)[256], byte rows = 10, byte start = 0) {
   if (page > 0) {
     start = (page * rows) + 1;
 
-    if (start >= row_ndx) {
+    if (start >= shared_data_ptr->row_ndx) {
       current_page = 0;
       start = 0;
     }
   }
 
-  Serial.print("current_page: ");
-  Serial.println(current_page);
+  debug("current_page: ");
+  debugln(current_page);
 
   iter_rows = start + rows;
 
   // guard against over-indexing past the max threshold
-  if (iter_rows > row_ndx) {
-    iter_rows = row_ndx;
+  if (iter_rows > shared_data_ptr->row_ndx) {
+    iter_rows = shared_data_ptr->row_ndx;
   }
 
   // Serial.print("start: ");
@@ -88,7 +106,7 @@ char *decoratePages(char (*pages)[256], byte rows = 10, byte start = 0) {
   // Serial.println(iter_rows);
 
   itoa(iter_rows, rows_bytes, 10);
-  itoa(row_ndx, row_ndx_bytes, 10);
+  itoa(shared_data_ptr->row_ndx, row_ndx_bytes, 10);
   itoa(start, start_bytes, 10);
 
   // FIXME copy first bytes to buffer
@@ -113,27 +131,25 @@ char *decoratePages(char (*pages)[256], byte rows = 10, byte start = 0) {
     strcat(output_buf, "Row[");
     strcat(output_buf, i_bytes);
     strcat(output_buf, "]: ");
-    strcat(output_buf, (char *) pages[i]);
+    strcat(output_buf, (char *) pages_ptr[i]);
     strcat(output_buf, "\n");
 
-    // Serial.print("pages[");
+    // Serial.print("pages_ptr[");
     // Serial.print(i);
     // Serial.print("]: ");
-    // Serial.println((char *) pages[i]);
+    // Serial.println((char *) pages_ptr[i]);
   }
 
-  if (row_ndx > rows) {
+  if (shared_data_ptr->row_ndx > rows) {
     strcat(output_buf, "\n-- (N)ext page --\n");
   }
 
   return output_buf;
 }
 
-
-
 bool timer_callback(void *) {
   String output = "timer_callback = " + String(millis());
-  Serial.println(output);
+  debugln(output);
 
   // digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); // toggle the LED
 
@@ -150,8 +166,12 @@ bool timer_callback(void *) {
 }
 
 void setup() {
+  #if DEBUG == 1
   Serial.begin(115200);
   while (!Serial);
+  #endif
+
+  memset(shared_data_ptr, 0, sizeof(*shared_data_ptr));
 
   display.begin();
   display.setRotation(90);
@@ -164,29 +184,29 @@ void setup() {
 
   // check for the WiFi module:
   if (WiFi.status() == WL_NO_SHIELD) {
-    Serial.println("Communication with WiFi module failed!");
+    debugln("Communication with WiFi module failed!");
     // don't continue
     while (true);
   }
 
   // attempt to connect to Wifi network:
   while (status != WL_CONNECTED) {
-    Serial.print("Attempting to connect to SSID: ");
-    Serial.println(ssid);
+    debug("Attempting to connect to SSID: ");
+    debugln(ssid);
     // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
     status = WiFi.begin(ssid, pass);
 
     // wait 3 seconds for connection:
     delay(3000);
   }
-  Serial.println("Connected to wifi");
+  debugln("Connected to wifi");
   printWifiStatus();
   // printWifiStatusToDisplay();
 
-  Serial.println("\nStarting connection to server...");
+  debugln("\nStarting connection to server...");
   // if you get a connection, report back via serial:
   if (client.connect(server, 80)) {
-    Serial.println("connected to server");
+    debugln("connected to server");
     // Make a HTTP request:
     client.println("GET /index.html HTTP/1.1");
     client.print("Host: ");
@@ -195,7 +215,7 @@ void setup() {
     client.println();
   }
 
-  Serial.println("System online");
+  debugln("System online");
 
   timer.every(TIMER_DELAY, timer_callback);
 }
@@ -205,8 +225,6 @@ void loop(){
 
   static uint16_t ndx = 0;
   char endMarker = '\n';
-
-  char ndx_bytes[5] = {0};
   char i_bytes[5] = {0};
 
   // if there are incoming bytes available
@@ -214,12 +232,12 @@ void loop(){
   while (client.available()) {
     char c = client.read();
 
-    if (c != endMarker) {  
-      pages[row_ndx][ndx] = c;
+    if (c != endMarker) {
+      shared_data_ptr->pages_ptr[shared_data_ptr->row_ndx][ndx] = c;
       ndx++;
     } else {
-      pages[row_ndx][ndx] = '\0';
-      row_ndx++;
+      shared_data_ptr->pages_ptr[shared_data_ptr->row_ndx][ndx] = '\0';
+      shared_data_ptr->row_ndx++;
 
       ndx = 0;
 
@@ -230,8 +248,8 @@ void loop(){
     if (ndx >= (std::numeric_limits<uint16_t>::max() - 1)) {
       ndx = 0;
     }
-    if (row_ndx >= (std::numeric_limits<byte>::max() - 1)) {
-      row_ndx = 0;
+    if (shared_data_ptr->row_ndx >= (std::numeric_limits<byte>::max() - 1)) {
+      shared_data_ptr->row_ndx = 0;
     }
   }
 
@@ -242,17 +260,17 @@ void loop(){
       byte rows = 6;
 
       if (newData) {
-        Serial.println("HTTP response received, rendering pages.");
+        debugln("HTTP response received, rendering pages_ptr.");
 
-        char *decorated = decoratePages(pages, rows);
+        char *decorated = decoratepages_ptr(shared_data_ptr->pages_ptr, rows);
         displayDrawText(decorated, true);
         // Serial.println(decorated);
 
         free(decorated);
       } else {
-        Serial.println("Disconnected from server, rendering existing page details.");
+        debugln("Disconnected from server, rendering existing page details.");
 
-        char *decorated_cpy = decoratePages(pages, rows);
+        char *decorated_cpy = decoratepages_ptr(shared_data_ptr->pages_ptr, rows);
         displayDrawText(decorated_cpy, true);
         free(decorated_cpy);
       }
@@ -277,17 +295,17 @@ void loop(){
 
 void printWifiStatus() {
   // print the SSID of the network you're attached to:
-  Serial.print("SSID: ");
-  Serial.println(WiFi.SSID());
+  debug("SSID: ");
+  debugln(WiFi.SSID());
 
   // print your board's IP address:
   IPAddress ip = WiFi.localIP();
-  Serial.print("IP Address: ");
-  Serial.println(ip);
+  debug("IP Address: ");
+  debugln(ip);
 
   // print the received signal strength:
   long rssi = WiFi.RSSI();
-  Serial.print("signal strength (RSSI):");
-  Serial.print(rssi);
-  Serial.println(" dBm");
+  debug("signal strength (RSSI):");
+  debug(rssi);
+  debugln(" dBm");
 }
